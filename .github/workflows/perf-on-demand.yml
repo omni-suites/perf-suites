@@ -1,0 +1,132 @@
+# On-demand k6 Performance Test Workflow
+#
+# GitHub → Settings → Secrets and variables → Actions (or Environments → staging):
+#   vars:   FRONTEND_URL, ORDER_URL, INVENTORY_URL, NOTIFICATION_URL
+#   secret: TEST_RESULT_HOOK_URL (points to omni-integration /api/discord/test-results)
+
+name: Performance On-Demand
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: 'Scenario name(s) to execute (e.g. apply_discount, order_create, checkout_flow, or all)'
+        required: true
+        default: 'all'
+        type: string
+      vus:
+        description: 'Virtual Users override (optional, e.g. 20)'
+        required: false
+        default: ''
+        type: string
+      duration:
+        description: 'Duration override (optional, e.g. 30s, 1m)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  performance-test:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Webpack Bundles
+        run: npm run build
+
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Run k6 Performance Test
+        env:
+          CI: true
+          TARGET_ENV: staging
+          FRONTEND_URL: ${{ vars.FRONTEND_URL }}
+          ORDER_URL: ${{ vars.ORDER_URL }}
+          INVENTORY_URL: ${{ vars.INVENTORY_URL }}
+          NOTIFICATION_URL: ${{ vars.NOTIFICATION_URL }}
+          SCENARIO: ${{ inputs.scenario }}
+        run: |
+          K6_FLAGS="--summary-export=summary.json"
+
+          if [ -n "${{ inputs.vus }}" ]; then
+            K6_FLAGS="$K6_FLAGS -e VUS=${{ inputs.vus }}"
+          fi
+
+          if [ -n "${{ inputs.duration }}" ]; then
+            K6_FLAGS="$K6_FLAGS -e DURATION=${{ inputs.duration }}"
+          fi
+
+          echo "Executing k6 with flags: $K6_FLAGS for scenario: ${{ inputs.scenario }}"
+          k6 run $K6_FLAGS -e SCENARIO="${{ inputs.scenario }}" dist/main.js
+
+      - name: Upload k6 Summary Artifact
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: k6-summary
+          path: summary.json
+          retention-days: 14
+
+      - name: Report Results to Omni-Integration Discord Bot
+        if: always()
+        env:
+          TEST_RESULT_HOOK_URL: ${{ secrets.TEST_RESULT_HOOK_URL }}
+        run: |
+          if [ -n "$TEST_RESULT_HOOK_URL" ]; then
+            node -e "
+              const fs = require('fs');
+              let metrics = { p95: 'N/A', total_requests: 0, error_rate: 0 };
+              try {
+                if (fs.existsSync('summary.json')) {
+                  const summary = JSON.parse(fs.readFileSync('summary.json', 'utf8'));
+                  const d = summary.metrics?.http_req_duration?.values;
+                  const reqs = summary.metrics?.http_reqs?.values;
+                  const failed = summary.metrics?.http_req_failed?.values;
+                  if (d) metrics.p95 = Math.round(d['p(95)'] || 0);
+                  if (reqs) metrics.total_requests = reqs.count || 0;
+                  if (failed) metrics.error_rate = ((failed.rate || 0) * 100).toFixed(2);
+                }
+              } catch (e) {
+                console.error('Error parsing summary.json', e);
+              }
+
+              const payload = {
+                type: 'perf',
+                suite: '${{ inputs.scenario }}',
+                status: '${{ job.status }}',
+                test_env: 'staging',
+                run_id: '${{ github.run_id }}',
+                run_url: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}',
+                ref: '${{ github.ref_name }}',
+                sha: '${{ github.sha }}',
+                vus: '${{ inputs.vus }}' || undefined,
+                duration: '${{ inputs.duration }}' || undefined,
+                metrics: metrics
+              };
+
+              fetch(process.env.TEST_RESULT_HOOK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+              }).then(res => {
+                console.log('Omni-Integration webhook response:', res.status);
+              }).catch(err => {
+                console.error('Failed to notify Omni-Integration:', err);
+              });
+            "
+          else
+            echo "::warning::TEST_RESULT_HOOK_URL secret is not set, skipping notification."
+          fi

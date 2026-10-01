@@ -1,0 +1,103 @@
+# Nightly Full Performance Regression against Staging
+#
+# Requires same staging vars/secrets as perf-on-demand.yml
+
+name: Performance Nightly
+
+on:
+  schedule:
+    - cron: '0 21 * * *' # 21:00 UTC daily (after functional regression)
+  workflow_dispatch:
+
+jobs:
+  performance-nightly:
+    timeout-minutes: 90
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Webpack Bundles
+        run: npm run build
+
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Run Full Performance Suite
+        env:
+          CI: true
+          TARGET_ENV: staging
+          FRONTEND_URL: ${{ vars.FRONTEND_URL }}
+          ORDER_URL: ${{ vars.ORDER_URL }}
+          INVENTORY_URL: ${{ vars.INVENTORY_URL }}
+          NOTIFICATION_URL: ${{ vars.NOTIFICATION_URL }}
+          SCENARIO: all
+        run: |
+          k6 run --summary-export=summary.json -e SCENARIO=all dist/main.js
+
+      - name: Upload k6 Nightly Summary Artifact
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: k6-nightly-summary
+          path: summary.json
+          retention-days: 14
+
+      - name: Report Results to Omni-Integration Discord Bot
+        if: always()
+        env:
+          TEST_RESULT_HOOK_URL: ${{ secrets.TEST_RESULT_HOOK_URL }}
+        run: |
+          if [ -n "$TEST_RESULT_HOOK_URL" ]; then
+            node -e "
+              const fs = require('fs');
+              let metrics = { p95: 'N/A', total_requests: 0, error_rate: 0 };
+              try {
+                if (fs.existsSync('summary.json')) {
+                  const summary = JSON.parse(fs.readFileSync('summary.json', 'utf8'));
+                  const d = summary.metrics?.http_req_duration?.values;
+                  const reqs = summary.metrics?.http_reqs?.values;
+                  const failed = summary.metrics?.http_req_failed?.values;
+                  if (d) metrics.p95 = Math.round(d['p(95)'] || 0);
+                  if (reqs) metrics.total_requests = reqs.count || 0;
+                  if (failed) metrics.error_rate = ((failed.rate || 0) * 100).toFixed(2);
+                }
+              } catch (e) {
+                console.error('Error parsing summary.json', e);
+              }
+
+              const payload = {
+                type: 'perf',
+                suite: 'all (nightly)',
+                status: '${{ job.status }}',
+                test_env: 'staging',
+                run_id: '${{ github.run_id }}',
+                run_url: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}',
+                ref: '${{ github.ref_name }}',
+                sha: '${{ github.sha }}',
+                metrics: metrics
+              };
+
+              fetch(process.env.TEST_RESULT_HOOK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+              }).then(res => {
+                console.log('Omni-Integration webhook response:', res.status);
+              }).catch(err => {
+                console.error('Failed to notify Omni-Integration:', err);
+              });
+            "
+          else
+            echo "::warning::TEST_RESULT_HOOK_URL secret is not set, skipping notification."
+          fi
