@@ -27,7 +27,7 @@ perf-suites/
 │   │       └── metrics.ts           # Custom k6 Trends, Counters, and Rates
 │   ├── modules/                     # Domain-Driven Microservices
 │   │   ├── order/                   # Order Service
-│   │   │   ├── api.ts               # HTTP client (createOrder, listOrders, applyDiscount)
+│   │   │   ├── api.ts               # HTTP client (createOrder, listOrders)
 │   │   │   ├── payloads.ts          # Dynamic payload generators
 │   │   │   └── scenarios/           # Isolated component load tests
 │   │   │       └── create-order.load.ts
@@ -40,7 +40,7 @@ perf-suites/
 │   ├── journeys/                    # Cross-Service Workflows
 │   │   ├── checkout-flow.ts         # Full API chain: Inventory → Order → Notification
 │   │   └── hybrid-browser-checkout.ts # UI load test using k6/browser
-│   └── main.ts                      # Unified multi-scenario engine with dynamic __ENV filtering
+│   └── main.ts                      # Unified multi-scenario engine with dynamic __ENV filtering & handleSummary
 ├── dist/                            # Webpack-bundled k6 execution artifacts
 ├── .env.sample                      # Environment template
 ├── package.json                     # Scripts & dev dependencies
@@ -68,7 +68,7 @@ cp .env.sample .env
 | `INVENTORY_URL` | **Yes** | Inventory Service API base URL | `https://inventory-svc.test-suites-poc.work.gd` |
 | `NOTIFICATION_URL` | **Yes** | Notification Service API base URL | `https://notification-svc.test-suites-poc.work.gd` |
 | `TARGET_ENV` | No | Metadata label for reports (e.g. `staging`) | `staging` |
-| `SCENARIO` | No | Scenario(s) to execute (default: `all`) | `checkout_flow`, `order_create`, `apply_discount` |
+| `SCENARIO` | No | Scenario(s) to execute (default: `all`) | `checkout_flow`, `order_create`, `inventory_deduct` |
 | `VUS` | No | Virtual Users concurrency override | `20` |
 | `DURATION` | No | Test duration override | `1m`, `30s` |
 
@@ -117,7 +117,7 @@ npm run test:browser       # Run hybrid browser UI load test
 The `main.js` engine reads `__ENV.SCENARIO` to execute specific workout routines without modifying code:
 
 ```bash
-# Run ALL registered scenarios
+# Run ALL deployed microservice scenarios
 k6 run dist/main.js
 
 # Run ONLY the checkout journey
@@ -130,21 +130,21 @@ k6 run -e SCENARIO=order_create dist/main.js
 k6 run -e SCENARIO=order_create,inventory_deduct dist/main.js
 
 # Override concurrency and duration on the fly
-k6 run -e SCENARIO=apply_discount -e VUS=25 -e DURATION=1m dist/main.js
+k6 run -e SCENARIO=checkout_flow -e VUS=25 -e DURATION=1m dist/main.js
 ```
 
 ---
 
-## 5. How to Add a New Scenario ("Feature ABC" Guide)
+## 5. How to Add a New Scenario (Future Features)
 
-When a new feature or API is added (e.g. **"Apply Discount Code"**):
+When a new feature or API is added to a microservice:
 
 ### Step 1: Add the API Client Call
-In `src/modules/order/api.ts`:
+In `src/modules/<service>/api.ts`:
 ```typescript
-export function applyDiscount(code: string, cartTotal: number) {
-  const url = `${ENV.getBaseUrls().order}/orders/discount`;
-  return http.post(url, JSON.stringify({ code, cartTotal }), {
+export function cancelOrder(orderId: string) {
+  const url = `${ENV.getBaseUrls().order}/orders/${orderId}/cancel`;
+  return http.post(url, JSON.stringify({ reason: 'customer_request' }), {
     headers: { 'Content-Type': 'application/json' },
   });
 }
@@ -154,24 +154,20 @@ export function applyDiscount(code: string, cartTotal: number) {
 In `src/main.ts`:
 ```typescript
 // 1. Define the scenario function
-export function runApplyDiscount() {
-  const res = applyDiscount('SAVE20', 100);
-  check(res, { 'discount accepted': (r) => r.status === 200 || r.status === 400 });
+export function runCancelOrder() {
+  const res = cancelOrder('order_123');
+  check(res, { 'order cancelled': (r) => r.status === 200 });
   sleep(1);
 }
 
 // 2. Add to scenarioCatalog
 const scenarioCatalog: Record<string, Scenario> = {
   // ... existing scenarios
-  apply_discount: {
-    executor: 'ramping-vus',
-    startVUs: 1,
-    stages: [
-      { duration: '10s', target: 20 },
-      { duration: '30s', target: 20 },
-      { duration: '10s', target: 0 },
-    ],
-    exec: 'runApplyDiscount',
+  cancel_order: {
+    executor: 'constant-vus',
+    vus: ENV.DEFAULT_VUS,
+    duration: ENV.DEFAULT_DURATION,
+    exec: 'runCancelOrder',
   },
 };
 ```
@@ -179,7 +175,7 @@ const scenarioCatalog: Record<string, Scenario> = {
 ### Step 3: Build & Execute On-Demand
 ```bash
 npm run build
-k6 run -e SCENARIO=apply_discount dist/main.js
+k6 run -e SCENARIO=cancel_order dist/main.js
 ```
 The new scenario is immediately runnable locally, via GitHub Actions, and from Discord!
 
@@ -191,7 +187,7 @@ Two GitHub Actions workflows are provided in `.github/workflows/`:
 
 | Workflow | Trigger | Description |
 |---|---|---|
-| **`perf-on-demand.yml`** | `workflow_dispatch` | Manual run with free-form text input for `scenario`, plus `vus` & `duration` overrides. |
+| **`perf-on-demand.yml`** | `workflow_dispatch` | Manual run with free-form text input for `scenario`, plus `vus` & `duration` overrides against `staging`. |
 | **`perf-nightly.yml`** | Schedule (`0 21 * * *`) | Daily 21:00 UTC staging regression running `SCENARIO: all`. |
 
 ### Required GitHub Secrets & Variables (Environment: `staging`)
@@ -201,13 +197,13 @@ Two GitHub Actions workflows are provided in `.github/workflows/`:
   * `INVENTORY_URL`
   * `NOTIFICATION_URL`
 * **Secrets:**
-  * `TEST_RESULT_HOOK_URL`: Webhook URL pointing to `omni-integration` (`/api/discord/test-results`).
+  * `TEST_RESULT_HOOK_URL`: Webhook URL pointing to `omni-integration` (`https://hooks.test-suites-poc.work.gd/api/discord/test-results`).
 
 ### Metrics Reporting
-Both workflows run k6 with `--summary-export=summary.json`. At the end of the job, a post-run step extracts:
-* **P95 Latency** (`metrics.http_req_duration['p(95)']`)
-* **Total Requests** (`metrics.http_reqs.count`)
-* **Error Rate** (`metrics.http_req_failed.rate`)
+Both workflows run k6 with native `handleSummary` export. At the end of the job, a post-run step extracts:
+* **P95 Latency**
+* **Total Requests**
+* **Error Rate**
 and posts the results to Omni-Integration via webhook.
 
 ---
@@ -218,12 +214,12 @@ Team members can trigger k6 performance tests directly from Discord using the `/
 
 ```text
 /run-perf scenario:checkout_flow vus:20 duration:1m
-/run-perf scenario:apply_discount
+/run-perf scenario:order_create
 /run-perf scenario:all
 ```
 
 ### Slash Command Options
-* `scenario` *(String, required)*: Open text input (`all`, `checkout_flow`, `order_create`, `inventory_deduct`, `apply_discount`).
+* `scenario` *(String, required)*: Open text input (`all`, `checkout_flow`, `order_create`, `inventory_deduct`, `notification_list`).
 * `vus` *(String, optional)*: Virtual Users count override.
 * `duration` *(String, optional)*: Test duration override (e.g. `30s`, `2m`).
 

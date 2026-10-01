@@ -26,20 +26,3 @@ export function createOrder(payload: CreateOrderPayload) {
 
   return res;
 }
-
-/**
- * Feature ABC Example: Apply Discount Code API
- */
-export function applyDiscount(code: string, cartTotal: number) {
-  const url = `${ENV.getBaseUrls().order}/orders/discount`;
-  const payload = { code, cartTotal };
-  const res = http.post(url, JSON.stringify(payload), {
-    headers: { 'Content-Type': 'application/json' },
-  });
-
-  check(res, {
-    'discount response received (200/400)': (r) => r.status === 200 || r.status === 400,
-  });
-
-  return res;
-}
