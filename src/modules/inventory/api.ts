@@ -2,11 +2,21 @@ import http from 'k6/http';
 import { ENV } from '@core/config/env';
 import { check } from 'k6';
 
-const BASE_URL = ENV.getBaseUrls().inventory;
+export function listInventory() {
+  const url = `${ENV.getBaseUrls().inventory}/inventory`;
+  const res = http.get(url);
 
-export function deductStock(itemId: string, quantity: number) {
-  const payload = { itemId, quantity };
-  const res = http.post(`${BASE_URL}/inventory/deduct`, JSON.stringify(payload), {
+  check(res, {
+    'inventory listed successfully (200)': (r) => r.status === 200,
+  });
+
+  return res;
+}
+
+export function deductStock(sku: string, quantity: number) {
+  const url = `${ENV.getBaseUrls().inventory}/inventory/deduct`;
+  const payload = { sku, quantity };
+  const res = http.post(url, JSON.stringify(payload), {
     headers: { 'Content-Type': 'application/json' },
   });
 

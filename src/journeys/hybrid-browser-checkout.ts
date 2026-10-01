@@ -7,8 +7,8 @@ export const options: Options = {
   scenarios: {
     ui_load: {
       executor: 'constant-vus',
-      vus: 2,
-      duration: '10s',
+      vus: Number(__ENV.BROWSER_VUS) || 2,
+      duration: __ENV.BROWSER_DURATION || '10s',
       options: {
         browser: {
           type: 'chromium',
@@ -26,8 +26,6 @@ export default async function () {
   
   try {
     await page.goto(ENV.getBaseUrls().omniClient);
-    // await page.locator('button[data-testid="buy-btn"]').click();
-    // await page.waitForNavigation();
   } finally {
     await page.close();
   }

@@ -1,0 +1,5 @@
+[
+  { "sku": "SKU-001", "name": "Standard Widget", "price": 29.99 },
+  { "sku": "SKU-002", "name": "Premium Gadget", "price": 89.99 },
+  { "sku": "SKU-003", "name": "Deluxe Bundle", "price": 149.99 }
+]

@@ -5,13 +5,14 @@ import { createOrder } from '@modules/order/api';
 import { getNotifications } from '@modules/notification/api';
 import { generateOrderPayload } from '@modules/order/payloads';
 import { orderCreationTrend, inventoryDeductionTrend, errorRate } from '@core/utils/metrics';
+import { ENV } from '@core/config/env';
 
 export const options: Options = {
   scenarios: {
     checkout_flow_load: {
       executor: 'constant-vus',
-      vus: 10,
-      duration: '30s',
+      vus: ENV.DEFAULT_VUS,
+      duration: ENV.DEFAULT_DURATION,
     },
   },
   thresholds: {

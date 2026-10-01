@@ -1,30 +1,77 @@
-export const ENV = {
-  // k6 provides __ENV which allows us to read environment variables passed via CLI (e.g. k6 run -e TARGET_ENV=staging)
-  TARGET_ENV: __ENV.TARGET_ENV || 'local',
+export interface ServiceUrls {
+  omniClient: string;
+  order: string;
+  inventory: string;
+  notification: string;
+}
 
-  getBaseUrls() {
-    switch (this.TARGET_ENV) {
-      case 'staging':
-        return {
-          omniClient: 'https://omni-client.test-suites-poc.work.gd',
-          order: 'https://order.test-suites-poc.work.gd',
-          inventory: 'https://inventory.test-suites-poc.work.gd',
-          notification: 'https://notification.test-suites-poc.work.gd',
-        };
-      case 'dev':
-        return {
-          omniClient: 'http://localhost:5173', // or actual dev URL
-          order: 'http://localhost:3000',
-          inventory: 'http://localhost:3001',
-          notification: 'http://localhost:3002',
-        };
-      default: // local
-        return {
-          omniClient: 'http://localhost:5173',
-          order: 'http://localhost:3000',
-          inventory: 'http://localhost:3001',
-          notification: 'http://localhost:3002',
-        };
-    }
+/**
+ * Target URLs and configuration for k6 runs — strictly required from env (.env / CI).
+ * No hardcoded host fallbacks (aligned with test-suites/src/config/environments.ts).
+ */
+
+export function getEnv(name: string, fallback?: string): string | undefined {
+  // 1. Runtime CLI flag or CI environment (k6 __ENV)
+  if (typeof __ENV !== 'undefined' && __ENV[name]) {
+    const val = __ENV[name].trim();
+    if (val) return val;
   }
+  // 2. Injected from perf-suites/.env via dotenv at build time
+  try {
+    if (typeof process !== 'undefined' && process.env && process.env[name]) {
+      const val = process.env[name].trim();
+      if (val) return val;
+    }
+  } catch (e) {
+    // k6 goja environment safety
+  }
+  return fallback;
+}
+
+export function requireEnv(name: string): string {
+  const val = getEnv(name);
+  if (!val) {
+    throw new Error(
+      `Missing required env: ${name}. Set it in perf-suites/.env or pass -e ${name}=value (see .env.sample).`
+    );
+  }
+  return val;
+}
+
+export const ENV = {
+  /** Optional label for reports/metadata */
+  get TARGET_ENV(): string | undefined {
+    return getEnv('TARGET_ENV');
+  },
+
+  /** Test parameters extracted from env */
+  get DEFAULT_VUS(): number {
+    return Number(getEnv('VUS', '10')) || 10;
+  },
+  get DEFAULT_DURATION(): string {
+    return getEnv('DURATION', '30s')!;
+  },
+  get SCENARIO_FILTER(): string {
+    return getEnv('SCENARIO') || getEnv('SCENARIOS') || 'all';
+  },
+
+  /**
+   * Target URLs for runs — strictly required from env (.env / CI).
+   * No hardcoded host fallbacks.
+   */
+  getBaseUrls(): ServiceUrls {
+    const frontendUrl = getEnv('FRONTEND_URL') || getEnv('OMNI_CLIENT_URL');
+    if (!frontendUrl) {
+      throw new Error(
+        `Missing required env: FRONTEND_URL. Set it in perf-suites/.env or pass -e FRONTEND_URL=value (see .env.sample).`
+      );
+    }
+
+    return {
+      omniClient: frontendUrl,
+      order: requireEnv('ORDER_URL'),
+      inventory: requireEnv('INVENTORY_URL'),
+      notification: requireEnv('NOTIFICATION_URL'),
+    };
+  },
 };

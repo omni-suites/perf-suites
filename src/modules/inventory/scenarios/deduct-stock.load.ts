@@ -1,11 +1,13 @@
 import { Options } from 'k6/options';
 import { deductStock } from '@modules/inventory/api';
+import { getTargetSku } from '@core/data';
+import { ENV } from '@core/config/env';
 
 export const options: Options = {
-  vus: 50,
-  duration: '1m',
+  vus: ENV.DEFAULT_VUS,
+  duration: ENV.DEFAULT_DURATION,
 };
 
 export default function () {
-  deductStock('item-123', 1);
+  deductStock(getTargetSku(), 1);
 }

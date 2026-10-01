@@ -1,9 +1,22 @@
 const path = require('path');
+const webpack = require('webpack');
+const dotenv = require('dotenv');
+
+// Load perf-suites/.env into build environment (matching test-suites pattern)
+const envResult = dotenv.config({ path: path.resolve(__dirname, '.env') });
+const envVars = envResult.parsed || {};
+
+// Map env variables for Webpack DefinePlugin
+const envKeys = Object.keys(envVars).reduce((prev, next) => {
+  prev[`process.env.${next}`] = JSON.stringify(envVars[next]);
+  return prev;
+}, {});
 
 module.exports = {
   mode: 'production',
   context: path.join(__dirname, 'src'),
   entry: {
+    'main': './main.ts',
     'checkout-flow': './journeys/checkout-flow.ts',
     'hybrid-browser-checkout': './journeys/hybrid-browser-checkout.ts',
     'create-order.load': './modules/order/scenarios/create-order.load.ts',
@@ -31,6 +44,9 @@ module.exports = {
       },
     ],
   },
+  plugins: [
+    new webpack.DefinePlugin(envKeys),
+  ],
   target: 'web',
   externals: /^(k6|https?\:\/\/)(\/.*)?/,
 };
