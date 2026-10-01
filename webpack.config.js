@@ -4,7 +4,10 @@ module.exports = {
   mode: 'production',
   context: path.join(__dirname, 'src'),
   entry: {
-    'checkout-flow': './journeys/checkout-flow.ts'
+    'checkout-flow': './journeys/checkout-flow.ts',
+    'hybrid-browser-checkout': './journeys/hybrid-browser-checkout.ts',
+    'create-order.load': './modules/order/scenarios/create-order.load.ts',
+    'deduct-stock.load': './modules/inventory/scenarios/deduct-stock.load.ts',
   },
   output: {
     path: path.join(__dirname, 'dist'),
@@ -29,6 +32,5 @@ module.exports = {
     ],
   },
   target: 'web',
-  // Externalize k6 built-in modules so webpack doesn't try to bundle them
   externals: /^(k6|https?\:\/\/)(\/.*)?/,
 };
