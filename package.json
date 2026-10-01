@@ -1,11 +1,16 @@
 {
   "name": "perf-suites",
   "version": "1.0.0",
-  "description": "K6 Performance Testing Framework",
-  "main": "index.js",
+  "description": "Domain-Driven k6 Performance Testing Framework for Omni-Suites",
+  "main": "dist/main.js",
   "scripts": {
     "build": "webpack",
-    "test:local": "k6 run dist/checkout-flow.js"
+    "build:watch": "webpack --watch",
+    "test": "k6 run dist/main.js",
+    "test:checkout": "k6 run dist/checkout-flow.js",
+    "test:order": "k6 run dist/create-order.load.js",
+    "test:inventory": "k6 run dist/deduct-stock.load.js",
+    "test:browser": "k6 run dist/hybrid-browser-checkout.js"
   },
   "devDependencies": {
     "@types/k6": "^0.50.0",
